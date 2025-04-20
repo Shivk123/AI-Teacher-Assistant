@@ -66,3 +66,24 @@ def post_announcement(creds, course_id, text):
     except HttpError as error:
         print(f"Failed to post announcement: {error}")
         return None
+
+def get_course_schedule(creds, course_id):
+    """
+    Get the schedule for a specific course from Google Calendar.
+    
+    Args:
+        creds: Google API credentials
+        course_id: Google Classroom course ID
+        
+    Returns:
+        List of scheduled class sessions
+    """
+    from utils.google_calendar import get_upcoming_classes
+    
+    # Get all upcoming classes
+    all_classes = get_upcoming_classes(creds, limit=100, days=90)
+    
+    # Filter by course ID
+    course_classes = [cls for cls in all_classes if cls.get('course_id') == course_id]
+    
+    return course_classes

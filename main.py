@@ -19,6 +19,19 @@ from utils.google_calendar import schedule_meet, get_upcoming_classes
 from utils.google_forms import create_quiz_form
 from utils.google_meet import get_meeting_recordings
 from utils.email_utils import send_class_notification
+from utils.automated_tasks import start_automation, stop_automation, is_automation_running
+from utils.google_calendar import schedule_recurring_classes
+from utils.google_meet import generate_meeting_summary
+from datetime import datetime, timedelta
+import time
+
+def start_automation_on_startup():
+    """Start automation when app starts"""
+    if not is_automation_running():
+        start_automation()
+        print("Automation services started")
+
+start_automation_on_startup()
 
 # --- Streamlit Setup ---
 st.set_page_config(page_title="📚 AI Teacher Assistant", layout="wide")
@@ -382,40 +395,82 @@ elif selected_tab == "Google Classroom":
                 else:
                     st.error("❌ Failed to create course")
                     
-        elif classroom_action == "Schedule Class Series":
-            # Set up recurring classes
-            st.subheader("Schedule Recurring Classes")
+elif classroom_action == "Schedule Class Series":
+    # Set up recurring classes
+    st.subheader("Schedule Recurring Classes")
+    
+    courses = list_courses(creds)
+    if not courses:
+        st.warning("No courses found. Create a course first.")
+    else:
+        course = st.selectbox(
+            "Choose Course", 
+            [f"{c['name']} ({c['id']})" for c in courses]
+        )
+        course_id = course.split("(")[-1][:-1]
+        
+        class_title = st.text_input("Class Title")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date")
+            end_date = st.date_input("End Date")
+        
+        with col2:
+            days_of_week = st.multiselect(
+                "Days of Week",
+                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            )
             
-            courses = list_courses(creds)
-            if not courses:
-                st.warning("No courses found. Create a course first.")
-            else:
-                course = st.selectbox(
-                    "Choose Course", 
-                    [f"{c['name']} ({c['id']})" for c in courses]
-                )
-                course_id = course.split("(")[-1][:-1]
-                
-                class_title = st.text_input("Class Title")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    start_date = st.date_input("Start Date")
-                    end_date = st.date_input("End Date")
-                
-                with col2:
-                    days_of_week = st.multiselect(
-                        "Days of Week",
-                        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        class_time = st.time_input("Class Time")
+        duration = st.number_input("Duration (minutes)", min_value=15, max_value=180, value=45, step=15)
+        
+        # Options for automated services
+        auto_reminder = st.checkbox("Send automatic reminders before class", value=True)
+        reminder_minutes = st.slider("Minutes before class to send reminder", 
+                                    min_value=5, max_value=60, value=15, step=5)
+        
+        auto_summary = st.checkbox("Generate and share meeting summary after class", value=True)
+        
+        if st.button("Schedule Class Series") and class_title and days_of_week:
+            with st.spinner("Creating recurring classes..."):
+                try:
+                    # Schedule all class sessions
+                    created_events = schedule_recurring_classes(
+                        creds, class_title, start_date, end_date, 
+                        days_of_week, class_time, duration, course_id
                     )
                     
-                class_time = st.time_input("Class Time")
-                duration = st.number_input("Duration (minutes)", min_value=15, max_value=180, value=45, step=15)
-                
-                if st.button("Schedule Class Series") and class_title and days_of_week:
-                    # This would create all class instances in Google Calendar
-                    st.success(f"✅ Scheduled {class_title} classes")
-                    st.info("This would create calendar events and Google Meet sessions for each class day")
+                    # Create summary message
+                    if created_events:
+                        st.success(f"✅ Successfully scheduled {len(created_events)} classes")
+                        
+                        # Display first few classes
+                        st.subheader("Upcoming Classes")
+                        for i, event in enumerate(created_events[:5]):
+                            st.write(f"• {event['date']} at {event['start_time']}")
+                            
+                        # Notify students about the schedule
+                        if st.button("Notify Students"):
+                            notification = f"""
+                            📚 New Class Schedule: {class_title}
+                            
+                            The following classes have been scheduled:
+                            
+                            {"".join([f"• {event['date']} at {event['start_time']}\\n" for event in created_events[:10]])}
+                            
+                            {"(More dates scheduled...)" if len(created_events) > 10 else ""}
+                            
+                            Google Meet links will be sent before each class.
+                            """
+                            
+                            send_class_notification(creds, course_id, f"New Class Schedule: {class_title}", notification)
+                            st.success("✅ Students notified about the class schedule")
+                    else:
+                        st.error("No classes were scheduled. Please check your date range and days selection.")
+                        
+                except Exception as e:
+                    st.error(f"Error scheduling classes: {str(e)}")
 
 # --- Calendar & Classes Tab ---
 elif selected_tab == "Calendar & Classes":
@@ -623,23 +678,129 @@ elif selected_tab == "Automation":
         "Track student attendance automatically",
         value=st.session_state.automated_tasks['auto_attendance']
     )
+elif selected_tab == "Automation":
+    st.header("⚙️ Automation Settings")
+    
+    st.write("Configure automated tasks for your classes")
+    
+    # System status
+    automation_status = "✅ Running" if is_automation_running() else "❌ Stopped"
+    st.info(f"Automation system status: {automation_status}")
+    
+    if not is_automation_running():
+        if st.button("Start Automation System"):
+            if start_automation():
+                st.success("Automation system started!")
+                st.experimental_rerun()
+    else:
+        if st.button("Stop Automation System"):
+            if stop_automation():
+                st.success("Automation system stopped!")
+                st.experimental_rerun()
+    
+    # Class Notifications
+    st.subheader("🔔 Class Notifications")
+    st.session_state.automated_tasks['auto_reminders'] = st.toggle(
+        "Send automatic class reminders",
+        value=st.session_state.automated_tasks['auto_reminders']
+    )
+    
+    if st.session_state.automated_tasks['auto_reminders']:
+        reminder_time = st.slider("Minutes before class", 5, 60, 15)
+        include_materials = st.checkbox("Include class materials", value=True)
+        
+        if st.button("Apply Settings"):
+            st.success("✅ Automatic class reminders configured")
+            st.info(f"Students will receive notifications {reminder_time} minutes before each class")
+    
+    # Meeting Summaries
+    st.subheader("📝 Meeting Summaries")
+    st.session_state.automated_tasks['auto_summaries'] = st.toggle(
+        "Generate automatic meeting summaries",
+        value=st.session_state.automated_tasks['auto_summaries']
+    )
+    
+    if st.session_state.automated_tasks['auto_summaries']:
+        share_with_students = st.checkbox("Share summaries with students", value=True)
+        summary_delay = st.slider("Minutes after class ends", 1, 30, 10)
+        
+        if st.button("Apply Summary Settings"):
+            st.success("✅ Automatic meeting summaries configured")
+            st.info(f"Summaries will be generated {summary_delay} minutes after each class session")
+    
+    # Attendance Tracking
+    st.subheader("👥 Attendance Tracking")
+    st.session_state.automated_tasks['auto_attendance'] = st.toggle(
+        "Track student attendance automatically",
+        value=st.session_state.automated_tasks['auto_attendance']
+    )
     
     if st.session_state.automated_tasks['auto_attendance']:
         if st.button("Apply Attendance Settings"):
             st.success("✅ Automatic attendance tracking configured")
             st.info("Student attendance will be recorded for each class session")
     
-    # Scheduler Status
-    st.subheader("🤖 Automation Status")
-    st.write("Current status of automated tasks:")
+    # Test Automation
+    st.subheader("🧪 Test Automation")
     
-    status_df = pd.DataFrame({
-        "Feature": ["Class Reminders", "Meeting Summaries", "Attendance Tracking"],
-        "Status": [
-            "✅ Active" if st.session_state.automated_tasks['auto_reminders'] else "❌ Inactive",
-            "✅ Active" if st.session_state.automated_tasks['auto_summaries'] else "❌ Inactive",
-            "✅ Active" if st.session_state.automated_tasks['auto_attendance'] else "❌ Inactive"
-        ]
-    })
+    test_type = st.selectbox(
+        "Choose function to test",
+        ["Send Class Reminder", "Generate Meeting Summary", "Schedule Series"]
+    )
     
-    st.dataframe(status_df, hide_index=True)
+    if test_type == "Send Class Reminder":
+        courses = list_courses(creds)
+        if courses:
+            test_course = st.selectbox(
+                "Select course",
+                [f"{c['name']} ({c['id']})" for c in courses]
+            )
+            test_course_id = test_course.split("(")[-1][:-1]
+            
+            custom_message = st.text_area("Custom message (optional)")
+            
+            if st.button("Send Test Reminder"):
+                with st.spinner("Sending test reminder..."):
+                    message = custom_message or f"This is a test reminder for your upcoming class."
+                    send_class_notification(creds, test_course_id, "Test Class Reminder", message)
+                st.success("✅ Test reminder sent!")
+    
+    elif test_type == "Generate Meeting Summary":
+        st.info("This function will simulate generating a meeting summary")
+        
+        if st.button("Generate Test Summary"):
+            with st.spinner("Generating test summary..."):
+                # Simulate a delay
+                time.sleep(2)
+                
+                # Generate a fake summary
+                summary = """
+                ## Class Summary
+                
+                **Main Topics Covered:**
+                - Introduction to Python programming
+                - Basic data types and variables
+                - Control flow (if statements and loops)
+                
+                **Key Points:**
+                1. Python is a high-level interpreted language
+                2. Python uses indentation to define code blocks
+                3. Variables don't need type declarations
+                
+                **Questions & Answers:**
+                - Q: How do I install Python?
+                  A: Download from python.org or use package manager
+                - Q: What's the difference between lists and tuples?
+                  A: Lists are mutable, tuples are immutable
+                
+                **Homework:**
+                - Complete exercises 1-5 in Chapter 2
+                - Prepare for quiz next week
+                
+                **Next Class:**
+                - Functions and modules
+                - Introduction to data structures
+                """
+                
+                st.subheader("📝 Generated Summary")
+                st.write(summary)
