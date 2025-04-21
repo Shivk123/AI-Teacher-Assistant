@@ -1,6 +1,4 @@
-# Save the README content to a downloadable file
-
-readme_content = """# 🧑‍🏫 Teacher Assistant App
+# 🧑‍🏫 Teacher Assistant App
 
 An AI-powered web application designed to automate and simplify routine teaching tasks—built in just **one hour** during the **5-Day Generative AI Intensive** by **Google & Kaggle**. This project leverages **Gemini AI** and **Google Cloud services** to empower educators with intelligent tools for classroom management, quiz creation, grading, and more.
 
