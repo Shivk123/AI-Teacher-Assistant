@@ -1,14 +1,12 @@
 # 🧑‍🏫 Teacher Assistant App
 
-![Teacher Assistant App Logo](https://via.placeholder.com/200x200?text=Teacher+Assistant "Teacher Assistant App")
-
 An AI-powered web application designed to automate and simplify routine teaching tasks—built in just **one hour** during the **5-Day Generative AI Intensive** by **Google & Kaggle**. This project leverages **Gemini AI** and **Google Cloud services** to empower educators with intelligent tools for classroom management, quiz creation, grading, and more.
 
 ---
 
 ## 🚀 Project Highlights
 
-![AI Teaching Assistant Dashboard](https://via.placeholder.com/800x450?text=Dashboard+Preview "Dashboard Preview")
+![AI Teaching Assistant Dashboard](./demo/Dashboard.png "Dashboard Preview")
 
 - ⏱️ **Built in ~1 hour** thanks to the seamless integration of Google Workspace APIs
 - 💡 Powered by **Gemini AI (Vertex AI)** for intelligent content generation
