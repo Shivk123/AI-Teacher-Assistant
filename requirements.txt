@@ -1,0 +1,10 @@
+streamlit
+google-generativeai
+python-dotenv
+PyPDF2
+google-auth-oauthlib
+google-auth
+google-api-python-client
+pandas
+numpy
+scikit-learn

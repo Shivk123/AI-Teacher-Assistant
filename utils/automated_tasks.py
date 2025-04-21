@@ -4,155 +4,132 @@ import time
 import json
 import os
 from datetime import datetime, timedelta
+import pytz
 import schedule
 from utils.google_auth import get_google_creds
-from utils.google_meet import generate_meeting_summary
 from utils.email_utils import send_class_notification
-from utils.google_calendar import get_upcoming_classes
-from config import DEFAULT_REMINDER_MINUTES
+from utils.google_calendar import get_upcoming_classes, DEFAULT_REMINDER_MINUTES
+from utils.ai_model import model
 
-class AutomationScheduler:
+# Default settings
+DEFAULT_SUMMARY_DELAY = 10
+
+class AutomationManager:
     def __init__(self):
         self.running = False
         self.thread = None
-        self.scheduled_tasks = []
-        self.load_scheduled_tasks()
-    
-    def load_scheduled_tasks(self):
-        """Load tasks from storage"""
-        # In a real app, use a database instead of files
-        if os.path.exists('scheduled_tasks.json'):
-            try:
-                with open('scheduled_tasks.json', 'r') as f:
-                    self.scheduled_tasks = json.load(f)
-            except:
-                self.scheduled_tasks = []
-    
-    def save_scheduled_tasks(self):
-        """Save tasks to storage"""
-        with open('scheduled_tasks.json', 'w') as f:
-            json.dump(self.scheduled_tasks, f)
-    
-    def start(self):
-        """Start the automation scheduler"""
-        if self.running:
-            return False
-        
-        self.running = True
-        self.thread = threading.Thread(target=self._run_scheduler)
-        self.thread.daemon = True
-        self.thread.start()
-        return True
-    
-    def stop(self):
-        """Stop the automation scheduler"""
-        self.running = False
-        if self.thread:
-            self.thread.join(timeout=1.0)
-            self.thread = None
-        return True
-    
-    def _run_scheduler(self):
-        """Run the scheduler loop"""
-        while self.running:
-            # Check for upcoming class reminders
-            self._check_class_reminders()
-            
-            # Check for scheduled summaries
-            self._check_scheduled_summaries()
-            
-            # Sleep for a minute
-            time.sleep(60)
-    
-    def _check_class_reminders(self):
-        """Check for upcoming classes and send reminders"""
-        try:
-            creds = get_google_creds()
-            now = datetime.utcnow()
-            
-            # Get upcoming classes
-            upcoming = get_upcoming_classes(creds, limit=20, days=1)
-            
-            # Check which ones need reminders
-            for cls in upcoming:
-                # Calculate minutes until class starts
-                time_until = (cls['start_time'] - now).total_seconds() / 60
-                
-                # If within reminder time but not too close
-                if DEFAULT_REMINDER_MINUTES <= time_until <= DEFAULT_REMINDER_MINUTES + 2:
-                    # Check if we've already sent a reminder
-                    reminder_id = f"reminder_{cls['id']}"
-                    if reminder_id not in [task['id'] for task in self.scheduled_tasks]:
-                        # Send reminder
-                        if cls['course_id']:
-                            subject = f"Reminder: {cls['summary']} starts in {int(time_until)} minutes"
-                            message = f"""
-                            Your class {cls['summary']} starts soon!
-                            
-                            Start time: {cls['start_time'].strftime('%I:%M %p')}
-                            
-                            Meeting link: {cls.get('meet_link', 'Check your calendar for details')}
-                            """
-                            
-                            send_class_notification(creds, cls['course_id'], subject, message)
-                            
-                            # Mark as sent
-                            self.scheduled_tasks.append({
-                                'id': reminder_id,
-                                'type': 'reminder',
-                                'sent_at': now.isoformat()
-                            })
-                            self.save_scheduled_tasks()
-        except Exception as e:
-            print(f"Error checking class reminders: {e}")
-    
-    def _check_scheduled_summaries(self):
-        """Check for classes that have ended and generate summaries"""
-        try:
-            if os.path.exists('scheduled_summaries.json'):
-                creds = get_google_creds()
-                now = datetime.utcnow()
-                
-                # Process each line in the file
-                with open('scheduled_summaries.json', 'r') as f:
-                    lines = f.readlines()
-                
-                new_lines = []
-                for line in lines:
-                    try:
-                        data = json.loads(line.strip())
-                        summary_time = datetime.fromisoformat(data['summary_time'])
-                        
-                        # Check if it's time to generate the summary
-                        if now >= summary_time:
-                            # Generate and post summary
-                            if data.get('meet_id') and data.get('course_id'):
-                                generate_meeting_summary(creds, data['meet_id'], data['course_id'])
-                        else:
-                            # Keep this task for later
-                            new_lines.append(line)
-                    except Exception as e:
-                        print(f"Error processing summary task: {e}")
-                        # Keep problematic tasks for now
-                        new_lines.append(line)
-                
-                # Rewrite the file with remaining tasks
-                with open('scheduled_summaries.json', 'w') as f:
-                    f.writelines(new_lines)
-        except Exception as e:
-            print(f"Error checking scheduled summaries: {e}")
+        self.creds = None
+        self.reminder_minutes = DEFAULT_REMINDER_MINUTES
+        self.summary_delay = DEFAULT_SUMMARY_DELAY
 
-# Global instance
-automation_scheduler = AutomationScheduler()
+    def start(self):
+        """Start the automation system."""
+        if not self.running:
+            self.running = True
+            self.creds = get_google_creds()
+            self.thread = threading.Thread(target=self._run_scheduler)
+            self.thread.daemon = True
+            self.thread.start()
+            return True
+        return False
+
+    def stop(self):
+        """Stop the automation system."""
+        if self.running:
+            self.running = False
+            if self.thread:
+                self.thread.join()
+            return True
+        return False
+
+    def _run_scheduler(self):
+        """Run the scheduler loop."""
+        while self.running:
+            schedule.run_pending()
+            time.sleep(1)
+
+    def schedule_reminders(self, minutes_before=DEFAULT_REMINDER_MINUTES):
+        """Schedule class reminders."""
+        self.reminder_minutes = minutes_before
+        schedule.every().day.at("00:00").do(self._setup_daily_reminders)
+
+    def schedule_summaries(self, delay_minutes=DEFAULT_SUMMARY_DELAY):
+        """Schedule meeting summaries."""
+        self.summary_delay = delay_minutes
+        schedule.every().day.at("00:00").do(self._setup_daily_summaries)
+
+    def _setup_daily_reminders(self):
+        """Set up reminders for today's classes."""
+        if not self.creds:
+            self.creds = get_google_creds()
+        
+        upcoming = get_upcoming_classes(self.creds)
+        for cls in upcoming:
+            reminder_time = cls['start_time'] - timedelta(minutes=self.reminder_minutes)
+            if reminder_time > datetime.now(pytz.UTC):
+                schedule.every().day.at(reminder_time.strftime("%H:%M")).do(
+                    self._send_reminder, cls
+                )
+
+    def _setup_daily_summaries(self):
+        """Set up summaries for today's classes."""
+        if not self.creds:
+            self.creds = get_google_creds()
+        
+        upcoming = get_upcoming_classes(self.creds)
+        for cls in upcoming:
+            summary_time = cls['end_time'] + timedelta(minutes=self.summary_delay)
+            if summary_time > datetime.now(pytz.UTC):
+                schedule.every().day.at(summary_time.strftime("%H:%M")).do(
+                    self._generate_summary, cls
+                )
+
+    def _send_reminder(self, class_info):
+        """Send reminder for a class."""
+        try:
+            course_id = class_info.get('course_id')
+            if course_id:
+                msg = f"Reminder: {class_info['summary']} starts in {self.reminder_minutes} minutes"
+                if 'meet_link' in class_info:
+                    msg += f"\nMeeting link: {class_info['meet_link']}"
+                send_class_notification(self.creds, course_id, "Class Reminder", msg)
+        except Exception as e:
+            print(f"Error sending reminder: {e}")
+
+    def _generate_summary(self, class_info):
+        """Generate summary for a class."""
+        try:
+            # Generate a basic summary using the AI model
+            prompt = f"""
+            Create a summary of the class session about {class_info['summary']}.
+            Include key points covered and important discussions.
+            """
+            
+            summary = model(prompt)
+            
+            # Share summary if course ID is available
+            course_id = class_info.get('course_id')
+            if course_id:
+                send_class_notification(
+                    self.creds,
+                    course_id,
+                    f"Summary: {class_info['summary']}",
+                    summary
+                )
+        except Exception as e:
+            print(f"Error generating summary: {e}")
+
+# Create a singleton instance
+automation_manager = AutomationManager()
 
 def start_automation():
-    """Start the automation scheduler"""
-    return automation_scheduler.start()
+    """Start the automation system."""
+    return automation_manager.start()
 
 def stop_automation():
-    """Stop the automation scheduler"""
-    return automation_scheduler.stop()
+    """Stop the automation system."""
+    return automation_manager.stop()
 
 def is_automation_running():
-    """Check if automation is running"""
-    return automation_scheduler.running
+    """Check if automation is running."""
+    return automation_manager.running

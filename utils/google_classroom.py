@@ -8,15 +8,51 @@ def list_courses(creds):
     return results.get('courses', [])
 
 # ✅ Create a new assignment
-def create_assignment(creds, course_id, title, description):
+def create_assignment(creds, course_id, title, description, due_date=None):
+    """
+    Create a new assignment in Google Classroom
+    
+    Args:
+        creds: Google API credentials
+        course_id: The ID of the course
+        title: Assignment title
+        description: Assignment description 
+        due_date: Optional due date (datetime object)
+    
+    Returns:
+        The created assignment
+    """
     service = build('classroom', 'v1', credentials=creds)
+    
     coursework = {
         'title': title,
         'description': description,
         'workType': 'ASSIGNMENT',
         'state': 'PUBLISHED'
     }
-    return service.courses().courseWork().create(courseId=course_id, body=coursework).execute()
+    
+    # Add due date if provided
+    if due_date:
+        # Convert to RFC 3339 timestamp format
+        # Format: YYYY-MM-DDThh:mm:ss.fffZ
+        from datetime import timezone
+        due_time = due_date.replace(tzinfo=timezone.utc)
+        coursework['dueDate'] = {
+            'year': due_time.year,
+            'month': due_time.month,
+            'day': due_time.day
+        }
+        coursework['dueTime'] = {
+            'hours': due_time.hour,
+            'minutes': due_time.minute,
+            'seconds': due_time.second
+        }
+    
+    try:
+        return service.courses().courseWork().create(courseId=course_id, body=coursework).execute()
+    except Exception as e:
+        print(f"Error creating assignment: {str(e)}")
+        return None
 
 # 🆕 Create a new course
 def create_course(creds, name, section=None, description=None, room=None):
