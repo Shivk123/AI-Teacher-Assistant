@@ -102,3 +102,19 @@ cd teacher-assistant-app
 - Visit [Google API Console](https://console.cloud.google.com/apis/credentials)
 - Click **"Create credentials" > API key**
 - Use this API key in your `.env` or config file as needed
+
+### 3. Install Dependencies
+
+Make sure you have Python installed, then run:
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Run the app
+
+Start the app using Streamlit:
+
+```bash
+streamlit run main.py
+```
